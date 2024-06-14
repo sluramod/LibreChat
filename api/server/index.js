@@ -6,6 +6,14 @@ const axios = require('axios');
 const express = require('express');
 const passport = require('passport');
 const mongoSanitize = require('express-mongo-sanitize');
+const opentelemetry = require('@opentelemetry/sdk-node');
+const { getNodeAutoInstrumentations } = require('@opentelemetry/auto-instrumentations-node');
+const { Resource } = require('@opentelemetry/resources');
+const { SEMRESATTRS_SERVICE_NAME } = require('@opentelemetry/semantic-conventions');
+const { BasicTracerProvider, BatchSpanProcessor } = require('@opentelemetry/sdk-trace-base');
+const { OTLPTraceExporter } = require('@opentelemetry/exporter-trace-otlp-http');
+const { LangChainInstrumentation } = require('@traceloop/instrumentation-langchain');
+
 const { jwtLogin, passportLogin } = require('~/strategies');
 const { connectDb, indexSync } = require('~/lib/db');
 const { isEnabled } = require('~/server/utils');
@@ -107,9 +115,44 @@ const startServer = async () => {
   });
 };
 
+const collectorOptions = {
+  concurrencyLimit: 10, // an optional limit on pending requests
+};
+
+const provider = new BasicTracerProvider();
+const traceExporter = new OTLPTraceExporter(collectorOptions);
+provider.addSpanProcessor(
+  new BatchSpanProcessor(traceExporter, {
+    // The maximum queue size. After the size is reached spans are dropped.
+    maxQueueSize: 1000,
+    // The interval between two consecutive exports
+    scheduledDelayMillis: 30000,
+  }),
+);
+
+provider.register();
+
+const sdk = new opentelemetry.NodeSDK({
+  resource: new Resource({
+    [SEMRESATTRS_SERVICE_NAME]: 'librechat-services',
+  }),
+  traceExporter,
+  instrumentations: [getNodeAutoInstrumentations(), new LangChainInstrumentation()],
+});
+sdk.start();
+
 startServer();
 
 let messageCount = 0;
+
+process.on('SIGTERM', () => {
+  sdk
+    .shutdown()
+    .then(() => console.log('Tracing terminated'))
+    .catch((error) => console.log('Error terminating tracing', error))
+    .finally(() => process.exit(0));
+});
+
 process.on('uncaughtException', (err) => {
   if (!err.message.includes('fetch failed')) {
     logger.error('There was an uncaught error:', err);

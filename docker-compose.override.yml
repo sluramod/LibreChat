@@ -1,0 +1,12 @@
+version: '3.4'
+
+services:
+
+ # LOCAL BUILD
+   api:
+     image: librechat
+     build:
+       context: .
+       target: node
+     environment:
+       - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:24318
