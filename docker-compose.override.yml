@@ -9,4 +9,8 @@ services:
        context: .
        target: node
      environment:
-       - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:24318
+       - OTEL_EXPORTER_OTLP_ENDPOINT=http://{DOCKER_GATEWAY_HOST:-host.docker.internal:24318
+
+   mongodb:
+     ports:
+       - 27017:27017

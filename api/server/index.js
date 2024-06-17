@@ -7,12 +7,13 @@ const express = require('express');
 const passport = require('passport');
 const mongoSanitize = require('express-mongo-sanitize');
 const opentelemetry = require('@opentelemetry/sdk-node');
-const { getNodeAutoInstrumentations } = require('@opentelemetry/auto-instrumentations-node');
+const OpenAI = require('openai');
+const { diag, DiagConsoleLogger, DiagLogLevel } = require('@opentelemetry/api');
 const { Resource } = require('@opentelemetry/resources');
 const { SEMRESATTRS_SERVICE_NAME } = require('@opentelemetry/semantic-conventions');
-const { BasicTracerProvider, BatchSpanProcessor } = require('@opentelemetry/sdk-trace-base');
 const { OTLPTraceExporter } = require('@opentelemetry/exporter-trace-otlp-http');
 const { LangChainInstrumentation } = require('@traceloop/instrumentation-langchain');
+const { OpenAIInstrumentation } = require('@traceloop/instrumentation-openai');
 
 const { jwtLogin, passportLogin } = require('~/strategies');
 const { connectDb, indexSync } = require('~/lib/db');
@@ -115,29 +116,26 @@ const startServer = async () => {
   });
 };
 
+diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.DEBUG);
+
+const openaiInstrumentation = new OpenAIInstrumentation({
+  traceContent: true,
+  exceptionLogger: (e) => console.log('error in openaiInstrumentation: ', e),
+});
+openaiInstrumentation.manuallyInstrument(OpenAI);
+
 const collectorOptions = {
   concurrencyLimit: 10, // an optional limit on pending requests
 };
 
-const provider = new BasicTracerProvider();
 const traceExporter = new OTLPTraceExporter(collectorOptions);
-provider.addSpanProcessor(
-  new BatchSpanProcessor(traceExporter, {
-    // The maximum queue size. After the size is reached spans are dropped.
-    maxQueueSize: 1000,
-    // The interval between two consecutive exports
-    scheduledDelayMillis: 30000,
-  }),
-);
-
-provider.register();
 
 const sdk = new opentelemetry.NodeSDK({
   resource: new Resource({
     [SEMRESATTRS_SERVICE_NAME]: 'librechat-services',
   }),
   traceExporter,
-  instrumentations: [getNodeAutoInstrumentations(), new LangChainInstrumentation()],
+  instrumentations: [new LangChainInstrumentation(), openaiInstrumentation],
 });
 sdk.start();
 
